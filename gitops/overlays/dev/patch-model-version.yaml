@@ -1,0 +1,9 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: seoul-traffic-model
+  namespace: kubeflow-user-example-com
+spec:
+  predictor:
+    sklearn:
+      storageUri: pvc://model-pvc/2025-03-01/

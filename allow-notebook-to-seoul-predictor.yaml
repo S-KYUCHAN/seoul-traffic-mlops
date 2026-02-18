@@ -1,0 +1,14 @@
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-notebook-default-editor-to-seoul-predictor
+  namespace: kubeflow-user-example-com
+spec:
+  selector:
+    matchLabels:
+      serving.knative.dev/service: seoul-traffic-model-predictor
+  rules:
+  - from:
+    - source:
+        principals:
+        - "cluster.local/ns/kubeflow-user-example-com/sa/default-editor"
