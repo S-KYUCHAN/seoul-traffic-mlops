@@ -5,5 +5,7 @@ metadata:
   namespace: kubeflow-user-example-com
 spec:
   predictor:
-    sklearn:
+    model:
+      modelFormat:
+        name: sklearn
       storageUri: pvc://model-pvc/MODEL_VERSION/
