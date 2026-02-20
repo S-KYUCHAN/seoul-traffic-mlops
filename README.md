@@ -34,7 +34,7 @@ Kubeflow Pipelines(KFP) + Katib(HPO)로 모델을 학습/평가하고, **Argo CD
 │     └─ dev/
 │        ├─ kustomization.yaml
 │        └─ patch-model-version.yaml
-└─ scripts/                  # (옵션) 모델 버전 bump / PR 자동화 스크립트
+└─ scripts/                  # 서울 교통량 트래픽 데이터 fetch 파이선 스크립트, 
 ```
 
 ---
