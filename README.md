@@ -23,6 +23,7 @@ Kubeflow Pipelines(KFP) + Katib(HPO)로 모델을 학습/평가하고, **Argo CD
 
 ## Repo Layout
 
+```text
 .
 ├─ pipelines/                # KFP pipeline YAML / pipeline build code
 ├─ gitops/
@@ -34,6 +35,7 @@ Kubeflow Pipelines(KFP) + Katib(HPO)로 모델을 학습/평가하고, **Argo CD
 │        ├─ kustomization.yaml
 │        └─ patch-model-version.yaml
 └─ scripts/                  # (옵션) 모델 버전 bump / PR 자동화 스크립트
+```
 
 ---
 
@@ -51,13 +53,13 @@ Kubeflow Pipelines(KFP) + Katib(HPO)로 모델을 학습/평가하고, **Argo CD
 
 ## 1) KServe 리소스(로컬) 확인
 
-`gitops/base/inferenceservice.yaml`은 InferenceService 리소스를 정의합니다.  [oai_citation:1‡GitHub](https://raw.githubusercontent.com/S-KYUCHAN/seoul-traffic-mlops/main/gitops/base/inferenceservice.yaml)  
+`gitops/base/inferenceservice.yaml`은 InferenceService 리소스를 정의합니다.
 현재는 `storageUri`를 PVC 기반으로 쓰고, 버전은 overlay에서 patch로 바꿉니다.
 
 - Base의 `storageUri`(placeholder):
-  - `pvc://model-pvc/MODEL_VERSION/`  [oai_citation:2‡GitHub](https://raw.githubusercontent.com/S-KYUCHAN/seoul-traffic-mlops/main/gitops/base/inferenceservice.yaml)
+  - `pvc://model-pvc/MODEL_VERSION/`
 
-Overlay는 base를 참조하고 patch를 적용합니다.  [oai_citation:3‡GitHub](https://raw.githubusercontent.com/S-KYUCHAN/seoul-traffic-mlops/main/gitops/overlays/dev/kustomization.yaml)
+Overlay는 base를 참조하고 patch를 적용합니다.
 
 ---
 
@@ -129,13 +131,14 @@ push 하면 Argo CD가 감지 → InferenceService 업데이트 → 새 revision
 
 ## 5) 검증(Verification)
 
-5-1) InferenceService가 새 버전을 가리키는지 확인
+### 5-1) InferenceService가 새 버전을 가리키는지 확인
 ```bash
 NS=kubeflow-user-example-com
 kubectl get isvc -n $NS seoul-traffic-model -o jsonpath='{.spec.predictor.model.storageUri}'; echo
 ```
+> KServe 버전에 따라 storageUri 필드는 spec.predictor.model.storageUri 또는 spec.predictor.sklearn.storageUri로 표현될 수 있으며, 본 프로젝트는 GitOps patch로 해당 값을 업데이트합니다.
 
-5-2) 예측 호출(클러스터 내부)
+### 5-2) 예측 호출(클러스터 내부)
 
 환경에 따라 외부 URL이 막혀있을 수 있어, 일반적으로는
  - kubectl port-forward로 predictor private service를 포워딩하거나
@@ -143,7 +146,9 @@ kubectl get isvc -n $NS seoul-traffic-model -o jsonpath='{.spec.predictor.model.
 
 (예: port-forward)
 ```bash
-kubectl -n $NS port-forward svc/seoul-traffic-model-predictor-00001-private 9999:8012
+NS=kubeflow-user-example-com
+SVC=$(kubectl -n $NS get ksvc seoul-traffic-model-predictor -o jsonpath='{.status.latestReadyRevisionName}')
+kubectl -n $NS port-forward svc/${SVC}-private 9999:8012
 curl -X POST http://localhost:9999/v1/models/seoul-traffic-model:predict \
   -H "Content-Type: application/json" \
   -d '{"instances": [[1.0, 2.0, 5.0, 10.0]]}'
