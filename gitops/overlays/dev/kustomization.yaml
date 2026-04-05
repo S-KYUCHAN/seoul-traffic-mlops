@@ -1,5 +1,8 @@
-resources:
-  - ../../base
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
 
-patches:
-  - path: patch-model-version.yaml
+namespace: kubeflow-user-example-com
+
+resources:
+  - deployment.yaml
+  - service.yaml

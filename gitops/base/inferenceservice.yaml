@@ -5,7 +5,19 @@ metadata:
   namespace: kubeflow-user-example-com
 spec:
   predictor:
+    minReplicas: 1
+    maxReplicas: 1
     model:
       modelFormat:
-        name: sklearn
-      storageUri: pvc://model-pvc/MODEL_VERSION/
+        name: mlflow
+      runtime: kserve-mlserver-custom
+      storageUri: pvc://model-pvc/v1/
+    containers:
+      - name: kserve-container
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "2Gi"
+          limits:
+            cpu: "500m"
+            memory: "4Gi"
