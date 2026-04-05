@@ -19,3 +19,4 @@ spec:
         limits:
           cpu: "500m"
           memory: "1Gi"
+    imagePullPolicy: IfNotPresent   # 이 줄 추가
