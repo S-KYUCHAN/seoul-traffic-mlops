@@ -12,6 +12,7 @@ spec:
         name: mlflow
       runtime: kserve-mlserver-custom
       storageUri: pvc://model-pvc/v1/
+      imagePullPolicy: IfNotPresent   # 이 줄 추가
       resources:
         requests:
           cpu: "250m"
@@ -19,4 +20,3 @@ spec:
         limits:
           cpu: "500m"
           memory: "1Gi"
-    imagePullPolicy: IfNotPresent   # 이 줄 추가
