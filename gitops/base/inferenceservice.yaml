@@ -12,12 +12,3 @@ spec:
         name: mlflow
       runtime: kserve-mlserver-custom
       storageUri: pvc://model-pvc/v1/
-    containers:
-      - name: kserve-container
-        resources:
-          requests:
-            cpu: "200m"
-            memory: "2Gi"
-          limits:
-            cpu: "500m"
-            memory: "4Gi"
