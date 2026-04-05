@@ -10,7 +10,7 @@ spec:
     model:
       modelFormat:
         name: mlflow
-      runtime: kserve-mlserver-custom
+      runtime: seoul-traffic-mlserver
       storageUri: pvc://model-pvc/v1/
       imagePullPolicy: IfNotPresent   # 이 줄 추가
       resources:
