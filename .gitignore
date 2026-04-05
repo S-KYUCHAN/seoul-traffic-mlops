@@ -1,1 +1,7 @@
 *.tar
+venv/
+*.json
+*.parquet
+__pycache__/
+*.pyc
+.DS_Store

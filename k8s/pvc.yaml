@@ -1,0 +1,38 @@
+# data-pvc
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-pvc
+  namespace: kubeflow-user-example-com
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+# model-pvc
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-pvc
+  namespace: kubeflow-user-example-com
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# artifacts-pvc
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: artifacts-pvc
+  namespace: kubeflow-user-example-com
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,29 @@
+# # mlflow-authz.yaml
+# apiVersion: security.istio.io/v1beta1
+# kind: AuthorizationPolicy
+# metadata:
+#   name: mlflow-allow-pipeline
+#   namespace: kubeflow-user-example-com
+# spec:
+#   selector:
+#     matchLabels:
+#       app: mlflow
+#   action: ALLOW
+#   rules:
+#   - from:
+#     - source:
+#         namespaces:
+#         - "kubeflow-user-example-com"
+
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: mlflow-allow-pipeline
+  namespace: kubeflow-user-example-com
+spec:
+  selector:
+    matchLabels:
+      app: mlflow
+  action: ALLOW
+  rules:
+  - {} # 👈 from 조건을 아예 비워두면 MLflow 파드에 대한 내부 접근이 조건 없이 허용됩니다.

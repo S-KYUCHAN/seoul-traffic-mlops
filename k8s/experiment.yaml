@@ -1,0 +1,102 @@
+apiVersion: kubeflow.org/v1beta1
+kind: Experiment
+metadata:
+  name: seoul-traffic-mlp-tuning
+  namespace: kubeflow-user-example-com
+spec:
+  objective:
+    type: minimize
+    goal: 50.0
+    objectiveMetricName: val-loss
+  metricsCollectorSpec:        # ← 이거 추가
+    collector:
+      kind: StdOut
+    source:
+      filter:
+        metricsFormat:
+        - "(.+)=(.+)"
+  parallelTrialCount: 2
+  maxTrialCount: 10
+  maxFailedTrialCount: 3
+  algorithm:
+    algorithmName: random
+  parameters:
+    - name: lr
+      parameterType: double
+      feasibleSpace:
+        min: "0.0001"
+        max: "0.01"
+
+    - name: hidden_size
+      parameterType: int
+      feasibleSpace:
+        min: "32"
+        max: "256"
+
+    - name: num_layers
+      parameterType: int
+      feasibleSpace:
+        min: "2"
+        max: "5"
+
+    - name: num_epochs
+      parameterType: int
+      feasibleSpace:
+        min: "20"
+        max: "100"
+
+    - name: batch_size
+      parameterType: int
+      feasibleSpace:
+        min: "32"
+        max: "128"
+
+  trialTemplate:
+    primaryContainerName: training-container
+    trialParameters:
+      - name: lr
+        description: learning rate
+        reference: lr
+      - name: hidden_size
+        description: hidden layer size
+        reference: hidden_size
+      - name: num_layers
+        description: number of hidden layers
+        reference: num_layers
+      - name: num_epochs
+        description: number of epochs
+        reference: num_epochs
+      - name: batch_size
+        description: batch size
+        reference: batch_size
+
+    trialSpec:
+      apiVersion: batch/v1
+      kind: Job
+      spec:
+        template:
+          metadata:
+            annotations:
+              sidecar.istio.io/inject: 'false'
+          spec:
+            containers:
+              - name: training-container
+                image: seoul-traffic-train:latest
+                imagePullPolicy: Never
+                command:
+                  - python
+                  - train_mlp.py
+                  - --lr=${trialParameters.lr}
+                  - --hidden_size=${trialParameters.hidden_size}
+                  - --num_layers=${trialParameters.num_layers}
+                  - --num_epochs=${trialParameters.num_epochs}
+                  - --batch_size=${trialParameters.batch_size}
+                  - --data_path=/data/train-v1.csv
+                volumeMounts:
+                  - name: data-volume
+                    mountPath: /data
+            volumes:
+              - name: data-volume
+                persistentVolumeClaim:
+                  claimName: data-pvc  # 실제 데이터 경로로 수정
+            restartPolicy: Never

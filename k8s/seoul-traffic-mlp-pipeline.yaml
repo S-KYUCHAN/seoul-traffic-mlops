@@ -1,0 +1,564 @@
+# PIPELINE DEFINITION
+# Name: seoul-traffic-mlp-pipeline
+# Inputs:
+#    artifact_mnt_path: str [Default: '/artifact']
+#    bucket_name: str [Default: 'seoul-traffic-bucket']
+#    data_mnt_path: str [Default: '/data']
+#    katib_exp_name: str [Default: 'seoul-traffic-mlp-tuning']
+#    model_mnt_path: str [Default: '/model']
+#    model_version: str [Default: 'v1']
+#    namespace: str [Default: 'kubeflow-user-example-com']
+#    test_blob: str [Default: 'training_dataset/test_20260308.parquet']
+#    train_blob: str [Default: 'training_dataset/train_20260308.parquet']
+components:
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      parameters:
+        artifact_mnt_path:
+          parameterType: STRING
+        data_mnt_path:
+          parameterType: STRING
+        model_mnt_path:
+          parameterType: STRING
+        model_version:
+          parameterType: STRING
+  comp-featurization:
+    executorLabel: exec-featurization
+    inputDefinitions:
+      parameters:
+        data_mnt_path:
+          parameterType: STRING
+        model_version:
+          parameterType: STRING
+        test_file:
+          parameterType: STRING
+        train_file:
+          parameterType: STRING
+  comp-fetch-from-gcs:
+    executorLabel: exec-fetch-from-gcs
+    inputDefinitions:
+      parameters:
+        bucket_name:
+          parameterType: STRING
+        data_mnt_path:
+          parameterType: STRING
+        test_blob:
+          parameterType: STRING
+        train_blob:
+          parameterType: STRING
+  comp-train-final-model:
+    executorLabel: exec-train-final-model
+    inputDefinitions:
+      parameters:
+        artifact_mnt_path:
+          parameterType: STRING
+        best_params_json:
+          parameterType: STRING
+        data_mnt_path:
+          parameterType: STRING
+        model_mnt_path:
+          parameterType: STRING
+        model_version:
+          parameterType: STRING
+  comp-tuning-with-katib:
+    executorLabel: exec-tuning-with-katib
+    inputDefinitions:
+      parameters:
+        exp_suffix:
+          parameterType: STRING
+        katib_exp_name:
+          parameterType: STRING
+        model_version:
+          parameterType: STRING
+        namespace:
+          defaultValue: kubeflow-user-example-com
+          isOptional: true
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n    data_mnt_path: str,\n    model_mnt_path:\
+          \ str,\n    artifact_mnt_path: str,\n    model_version: str,\n):\n    import\
+          \ os, json\n    import torch\n    import torch.nn as nn\n    import pandas\
+          \ as pd\n    import mlflow\n\n    MLFLOW_URI = \"http://mlflow.kubeflow-user-example-com.svc.cluster.local:80\"\
+          \n    mlflow.set_tracking_uri(MLFLOW_URI)\n    mlflow.set_experiment(\"\
+          seoul-traffic-mlp\")\n\n    DEVICE = \"cuda\" if torch.cuda.is_available()\
+          \ else \"cpu\"\n\n    class TrafficMLP(nn.Module):\n        def __init__(self,\
+          \ hidden_size=128, num_layers=3):\n            super().__init__()\n    \
+          \        layers = [nn.Linear(4, hidden_size), nn.ReLU()]\n            for\
+          \ _ in range(num_layers - 1):\n                layers += [nn.Linear(hidden_size,\
+          \ hidden_size), nn.ReLU()]\n            layers.append(nn.Linear(hidden_size,\
+          \ 1))\n            self.net = nn.Sequential(*layers)\n\n        def forward(self,\
+          \ x):\n            return self.net(x)\n\n    with open(os.path.join(artifact_mnt_path,\
+          \ model_version, \"param.json\")) as f:\n        params = json.load(f)\n\
+          \n    model = TrafficMLP(\n        hidden_size=params[\"hidden_size\"],\
+          \ \n        num_layers=params[\"num_layers\"]\n    ).to(DEVICE)\n    model.load_state_dict(\n\
+          \        torch.load(\n            os.path.join(model_mnt_path, model_version,\
+          \ \"model.pt\"),\n            map_location=DEVICE\n        )\n    )\n  \
+          \  model.eval()\n\n    df = pd.read_csv(os.path.join(data_mnt_path, f\"\
+          test-{model_version}.csv\"))\n    X = torch.tensor(df[['x1', 'x2', 'x3',\
+          \ 'x4']].values, dtype=torch.float32).to(DEVICE)\n    Y_mean = params[\"\
+          Y_mean\"]\n    Y_std = params[\"Y_std\"]\n    y_real = df['y'].values\n\n\
+          \    with torch.no_grad():\n        pred_norm = model(X).squeeze(-1).cpu().numpy()\n\
+          \    pred_vol = pred_norm * Y_std + Y_mean\n\n    mae = float(abs(pred_vol\
+          \ - y_real).mean())\n    print(f\"MAE: {mae:.2f}\")\n\n    with mlflow.start_run(run_name=f\"\
+          {model_version}-eval\"):\n        mlflow.log_metric(\"mae\", mae)\n    \
+          \    print(f\"MLflow logged MAE: {mae}\")\n\n    artifacts_path = os.path.join(artifact_mnt_path,\
+          \ model_version)\n    os.makedirs(artifacts_path, exist_ok=True)\n    with\
+          \ open(os.path.join(artifacts_path, \"score.json\"), \"w\") as f:\n    \
+          \    json.dump({\"mae\": mae}, f)\n\n    print(f\"Saved score to {artifacts_path}/score.json\"\
+          )\n\n"
+        image: seoul-traffic-mlflow:latest
+    exec-featurization:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - featurization
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef featurization(\n    data_mnt_path: str,\n    train_file: str,\n\
+          \    test_file: str,\n    model_version: str,\n):\n    import numpy as np\n\
+          \    import pandas as pd\n    import os\n\n    train_df = pd.read_parquet(os.path.join(data_mnt_path,\
+          \ train_file))\n    test_df = pd.read_parquet(os.path.join(data_mnt_path,\
+          \ test_file))\n\n    def featurize(df):\n        df = df[df['quality_flag']\
+          \ == 'Y'].copy()\n        df['datetime'] = pd.to_datetime(df['ymd']) + pd.to_timedelta(df['hh'],\
+          \ unit='h')\n        hour_sr = df['datetime'].dt.hour\n        dow_sr =\
+          \ df['datetime'].dt.dayofweek\n        # \uC2DC\uAC04 \uAD00\uB828 feature\n\
+          \        df['x1'] = np.sin(2*np.pi*hour_sr/24)\n        df['x2'] = np.cos(2*np.pi*hour_sr/24)\n\
+          \        # \uC694\uC77C \uAD00\uB828 feature\n        df['x3'] = np.sin(2*np.pi*dow_sr/7)\n\
+          \        df['x4'] = np.cos(2*np.pi*dow_sr/7)\n        df['y'] = df['total_vol']\n\
+          \        return df[['x1', 'x2', 'x3', 'x4', 'y']]\n\n    featurize(train_df).to_csv(os.path.join(data_mnt_path,\
+          \ f'train-{model_version}.csv'), index=False)\n    featurize(test_df).to_csv(os.path.join(data_mnt_path,\
+          \ f'test-{model_version}.csv'), index=False)\n    print(f\"Featurization\
+          \ done: {model_version}\")\n\n"
+        image: mlops.kr-central-2.kcr.dev/kc-kubeflow-registry/jupyter-scipy:v1.10.0.py311.1a
+    exec-fetch-from-gcs:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - fetch_from_gcs
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-storage'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef fetch_from_gcs(\n    bucket_name: str,\n    train_blob: str,\n\
+          \    test_blob: str,\n    data_mnt_path: str,\n):\n    import os\n    os.environ['GOOGLE_APPLICATION_CREDENTIALS']\
+          \ = '/secret/gcp/key.json'\n\n    from google.cloud import storage\n   \
+          \ client = storage.Client()\n    bucket = client.bucket(bucket_name)\n\n\
+          \    train_path = os.path.join(data_mnt_path, 'train.parquet')\n    test_path\
+          \ = os.path.join(data_mnt_path, 'test.parquet')\n\n    bucket.blob(train_blob).download_to_filename(train_path)\n\
+          \    print(f\"fetched train data: {train_blob} -> {train_path}\")\n\n  \
+          \  bucket.blob(test_blob).download_to_filename(test_path)\n    print(f\"\
+          fetched test data: {test_blob} -> {test_path}\")\n\n"
+        image: mlops.kr-central-2.kcr.dev/kc-kubeflow-registry/jupyter-scipy:v1.10.0.py311.1a
+    exec-train-final-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_final_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_final_model(\n    best_params_json: str,\n    data_mnt_path:\
+          \ str,\n    model_mnt_path: str,\n    artifact_mnt_path: str,\n    model_version:\
+          \ str,\n):\n    import os, json\n    import torch\n    import torch.nn as\
+          \ nn\n    from torch.utils.data import Dataset, DataLoader\n    import pandas\
+          \ as pd\n    import mlflow\n    import mlflow.pytorch\n\n    MLFLOW_URI\
+          \ = \"http://mlflow.kubeflow-user-example-com.svc.cluster.local:80\"\n \
+          \   mlflow.set_tracking_uri(MLFLOW_URI)\n    mlflow.set_experiment(\"seoul-traffic-mlp\"\
+          )\n\n    params = json.loads(best_params_json)\n    print(f\"params: {params}\"\
+          )\n\n    DEVICE = \"cuda\" if torch.cuda.is_available() else \"cpu\"\n\n\
+          \    class TrafficDataset(Dataset):\n        def __init__(self, csv_path):\n\
+          \            df = pd.read_csv(csv_path)\n\n            self.Y_mean = df['y'].mean()\n\
+          \            self.Y_std = df['y'].std()\n\n            df['y_norm'] = (df['y']\
+          \ - self.Y_mean) / self.Y_std\n\n            self.X = torch.tensor(df[['x1',\
+          \ 'x2', 'x3', 'x4']].values, dtype=torch.float32)\n            self.Y =\
+          \ torch.tensor(df['y_norm'].values, dtype=torch.float32)\n\n        def\
+          \ __len__(self):\n            return len(self.X)\n\n        def __getitem__(self,\
+          \ i):\n            return self.X[i], self.Y[i]\n\n    class TrafficMLP(nn.Module):\n\
+          \        def __init__(self, hidden_size=128, num_layers=3):\n          \
+          \  super().__init__()\n            layers = [nn.Linear(4, hidden_size),\
+          \ nn.ReLU()]\n            for _ in range(num_layers - 1):\n            \
+          \    layers += [nn.Linear(hidden_size, hidden_size), nn.ReLU()]\n      \
+          \      layers.append(nn.Linear(hidden_size, 1))\n            self.net =\
+          \ nn.Sequential(*layers)\n\n        def forward(self, x):\n            return\
+          \ self.net(x)\n\n    data_path = os.path.join(data_mnt_path, f\"train-{model_version}.csv\"\
+          )\n    dataset = TrafficDataset(data_path)\n    loader = DataLoader(dataset,\
+          \ batch_size=params[\"batch_size\"], shuffle=True)\n\n    model = TrafficMLP(\n\
+          \        hidden_size=params[\"hidden_size\"], \n        num_layers=params[\"\
+          num_layers\"]\n    ).to(DEVICE)\n    optimizer = torch.optim.Adam(model.parameters(),\
+          \ lr=params[\"lr\"])\n    loss_fn = nn.MSELoss()\n    scaler = torch.amp.GradScaler('cuda')\
+          \ if DEVICE == 'cuda' else None\n\n    with mlflow.start_run(run_name =\
+          \ model_version):\n        mlflow.log_params(params)\n\n        for epoch\
+          \ in range(params[\"num_epochs\"]):\n            model.train()\n       \
+          \     total_loss = 0.0\n\n            for X_batch, Y_batch in loader:\n\
+          \                X_batch = X_batch.to(DEVICE)\n                Y_batch =\
+          \ Y_batch.to(DEVICE)\n\n                optimizer.zero_grad(set_to_none=True)\n\
+          \n                if scaler:\n                    with torch.autocast(device_type='cuda',\
+          \ dtype=torch.bfloat16):\n                        pred = model(X_batch).squeeze(-1)\n\
+          \                        loss = loss_fn(pred, Y_batch)\n               \
+          \     scaler.scale(loss).backward()\n                    scaler.step(optimizer)\n\
+          \                    scaler.update()\n                else:\n          \
+          \          pred = model(X_batch).squeeze(-1)\n                    loss =\
+          \ loss_fn(pred, Y_batch)\n                    loss.backward()\n        \
+          \            optimizer.step()\n\n                total_loss += loss.item()\n\
+          \n            if (epoch + 1) % 10 == 0:\n                with torch.no_grad():\n\
+          \                    all_X = dataset.X.to(DEVICE)\n                    all_Y\
+          \ = dataset.Y.to(DEVICE)\n\n                    if scaler:\n           \
+          \             with torch.autocast(device_type='cuda', dtype=torch.bfloat16):\n\
+          \                            pred_norm = model(all_X).squeeze(-1)\n    \
+          \                else:\n                        pred_norm = model(all_X).squeeze(-1)\n\
+          \                    pred_vol = pred_norm * dataset.Y_std + dataset.Y_mean\n\
+          \                    real_vol = all_Y * dataset.Y_std + dataset.Y_mean\n\
+          \                    mae = (pred_vol - real_vol).abs().mean().item()\n\n\
+          \                mlflow.log_metric(\"train_mae\", mae, step=epoch+1)\n \
+          \               print(f\"Epoch {epoch+1}/{params['num_epochs']} | Loss:\
+          \ {total_loss/len(loader):.4f} | MAE: {mae:.1f}\")\n\n        model_dir\
+          \ = os.path.join(model_mnt_path, model_version)\n        os.makedirs(model_dir,\
+          \ exist_ok=True)\n        torch.save(model.state_dict(), os.path.join(model_dir,\
+          \ 'model.pt'))\n\n        mlflow.pytorch.log_model(model, artifact_path=\"\
+          model\")\n\n        artifact_dir = os.path.join(artifact_mnt_path, model_version)\n\
+          \        os.makedirs(artifact_dir, exist_ok=True)\n        with open(os.path.join(artifact_dir,\
+          \ 'param.json'), 'w') as f:\n            json.dump({\n                **params,\n\
+          \                \"Y_mean\": dataset.Y_mean,\n                \"Y_std\"\
+          : dataset.Y_std,\n            }, f)\n        print(f\"Saved params to {artifact_dir}/param.json\"\
+          )\n\n"
+        image: seoul-traffic-mlflow:latest
+    exec-tuning-with-katib:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - tuning_with_katib
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubeflow-katib'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.16.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef tuning_with_katib(\n    katib_exp_name: str,\n    model_version:\
+          \ str,\n    exp_suffix: str,\n    namespace: str = \"kubeflow-user-example-com\"\
+          ,\n) -> str:\n    import kubeflow.katib as katib\n    import re, hashlib,\
+          \ json\n    import ast\n\n    def make_katib_name(base: str, version: str,\
+          \ suffix: str) -> str:\n        s = f\"{base}-d{version}-{suffix}\".lower()\n\
+          \        s = re.sub(r'[^a-z0-9-]+', '-', s).strip('-')\n        if not re.match(r'^[a-z]',\
+          \ s):\n            s = \"k-\" + s\n        if len(s) > 40:\n           \
+          \ h = hashlib.sha1(s.encode()).hexdigest()[:6]\n            s = s[:33].rstrip('-')\
+          \ + \"-\" + h\n        return s\n\n    katib_client = katib.KatibClient(namespace=namespace)\n\
+          \    katib_exp = katib_client.get_experiment(katib_exp_name)\n    exp_name\
+          \ = make_katib_name(katib_exp_name, model_version, exp_suffix)\n    katib_exp.metadata.name\
+          \ = exp_name\n    katib_exp.metadata.resource_version = None\n\n    katib_client.create_experiment(katib_exp)\n\
+          \    katib_client.wait_for_experiment_condition(name=exp_name)\n\n    optim_params\
+          \ = katib_client.get_optimal_hyperparameters(exp_name)\n    print(f\"optim_params:\
+          \ {optim_params}\")\n\n    params = { param.name: ast.literal_eval(param.value)\
+          \ for param in optim_params.parameter_assignments}\n\n    print(f\"Best\
+          \ params: {params}\")\n\n    return json.dumps(params)\n\n"
+        image: mlops.kr-central-2.kcr.dev/kc-kubeflow-registry/jupyter-scipy:v1.10.0.py311.1a
+pipelineInfo:
+  name: seoul-traffic-mlp-pipeline
+root:
+  dag:
+    tasks:
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - train-final-model
+        inputs:
+          parameters:
+            artifact_mnt_path:
+              componentInputParameter: artifact_mnt_path
+            data_mnt_path:
+              componentInputParameter: data_mnt_path
+            model_mnt_path:
+              componentInputParameter: model_mnt_path
+            model_version:
+              componentInputParameter: model_version
+        taskInfo:
+          name: evaluate-model
+      featurization:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-featurization
+        dependentTasks:
+        - fetch-from-gcs
+        inputs:
+          parameters:
+            data_mnt_path:
+              componentInputParameter: data_mnt_path
+            model_version:
+              componentInputParameter: model_version
+            test_file:
+              runtimeValue:
+                constant: test.parquet
+            train_file:
+              runtimeValue:
+                constant: train.parquet
+        taskInfo:
+          name: featurization
+      fetch-from-gcs:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-fetch-from-gcs
+        inputs:
+          parameters:
+            bucket_name:
+              componentInputParameter: bucket_name
+            data_mnt_path:
+              componentInputParameter: data_mnt_path
+            test_blob:
+              componentInputParameter: test_blob
+            train_blob:
+              componentInputParameter: train_blob
+        taskInfo:
+          name: fetch-from-gcs
+      train-final-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-final-model
+        dependentTasks:
+        - tuning-with-katib
+        inputs:
+          parameters:
+            artifact_mnt_path:
+              componentInputParameter: artifact_mnt_path
+            best_params_json:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: tuning-with-katib
+            data_mnt_path:
+              componentInputParameter: data_mnt_path
+            model_mnt_path:
+              componentInputParameter: model_mnt_path
+            model_version:
+              componentInputParameter: model_version
+        taskInfo:
+          name: train-final-model
+      tuning-with-katib:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-tuning-with-katib
+        dependentTasks:
+        - featurization
+        inputs:
+          parameters:
+            exp_suffix:
+              runtimeValue:
+                constant: '{{$.pipeline_job_name}}'
+            katib_exp_name:
+              componentInputParameter: katib_exp_name
+            model_version:
+              componentInputParameter: model_version
+            namespace:
+              runtimeValue:
+                constant: kubeflow-user-example-com
+        taskInfo:
+          name: tuning-with-katib
+  inputDefinitions:
+    parameters:
+      artifact_mnt_path:
+        defaultValue: /artifact
+        isOptional: true
+        parameterType: STRING
+      bucket_name:
+        defaultValue: seoul-traffic-bucket
+        isOptional: true
+        parameterType: STRING
+      data_mnt_path:
+        defaultValue: /data
+        isOptional: true
+        parameterType: STRING
+      katib_exp_name:
+        defaultValue: seoul-traffic-mlp-tuning
+        isOptional: true
+        parameterType: STRING
+      model_mnt_path:
+        defaultValue: /model
+        isOptional: true
+        parameterType: STRING
+      model_version:
+        defaultValue: v1
+        isOptional: true
+        parameterType: STRING
+      namespace:
+        defaultValue: kubeflow-user-example-com
+        isOptional: true
+        parameterType: STRING
+      test_blob:
+        defaultValue: training_dataset/test_20260308.parquet
+        isOptional: true
+        parameterType: STRING
+      train_blob:
+        defaultValue: training_dataset/train_20260308.parquet
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.16.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-evaluate-model:
+          imagePullPolicy: Never
+          pvcMount:
+          - constant: data-pvc
+            mountPath: /data
+            pvcNameParameter:
+              runtimeValue:
+                constant: data-pvc
+          - constant: model-pvc
+            mountPath: /model
+            pvcNameParameter:
+              runtimeValue:
+                constant: model-pvc
+          - constant: artifacts-pvc
+            mountPath: /artifact
+            pvcNameParameter:
+              runtimeValue:
+                constant: artifacts-pvc
+        exec-featurization:
+          pvcMount:
+          - constant: data-pvc
+            mountPath: /data
+            pvcNameParameter:
+              runtimeValue:
+                constant: data-pvc
+        exec-fetch-from-gcs:
+          pvcMount:
+          - constant: data-pvc
+            mountPath: /data
+            pvcNameParameter:
+              runtimeValue:
+                constant: data-pvc
+          secretAsVolume:
+          - mountPath: /secret/gcp
+            optional: false
+            secretName: gcp-sa-key
+            secretNameParameter:
+              runtimeValue:
+                constant: gcp-sa-key
+        exec-train-final-model:
+          imagePullPolicy: Never
+          pvcMount:
+          - constant: data-pvc
+            mountPath: /data
+            pvcNameParameter:
+              runtimeValue:
+                constant: data-pvc
+          - constant: model-pvc
+            mountPath: /model
+            pvcNameParameter:
+              runtimeValue:
+                constant: model-pvc
+          - constant: artifacts-pvc
+            mountPath: /artifact
+            pvcNameParameter:
+              runtimeValue:
+                constant: artifacts-pvc

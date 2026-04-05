@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seoul-traffic-fastapi
+  namespace: kubeflow-user-example-com
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: seoul-traffic-fastapi
+  template:
+    metadata:
+      labels:
+        app: seoul-traffic-fastapi
+    spec:
+      containers:
+        - name: seoul-traffic-fastapi
+          image: seoul-traffic-fastapi:latest
+          imagePullPolicy: Never
+          env:
+            - name: MODEL_DIR
+              value: /model/v1
+            - name: ARTIFACT_DIR
+              value: /artifact/v1
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: model-volume
+              mountPath: /model
+            - name: artifact-volume
+              mountPath: /artifact
+          # readinessProbe: 트래픽 받기 전 준비 여부 확인
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # livenessProbe: 프로세스가 비정상 상태면 재시작
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+      volumes:
+        - name: model-volume
+          persistentVolumeClaim:
+            claimName: model-pvc
+        - name: artifact-volume
+          persistentVolumeClaim:
+            claimName: artifacts-pvc
