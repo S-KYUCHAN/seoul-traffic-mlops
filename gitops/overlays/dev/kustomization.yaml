@@ -4,5 +4,4 @@ kind: Kustomization
 namespace: kubeflow-user-example-com
 
 resources:
-  - deployment.yaml
-  - service.yaml
+  - ../../base
