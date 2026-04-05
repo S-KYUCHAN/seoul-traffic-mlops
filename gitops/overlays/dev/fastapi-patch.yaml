@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seoul-traffic-fastapi
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: seoul-traffic-fastapi
+          image: seoul-traffic-fastapi:latest
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
